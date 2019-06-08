@@ -1,0 +1,529 @@
+---
+title: "Final_Project"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+Step 0: Load the packages
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(foreign) 
+library(sand)
+library(igraph)
+library(ggplot2)
+library(plyr)
+library(rmarkdown)
+```
+
+
+
+Step 1: Read in the data and Get the node and edge attributes
+In the step, we select the data from HIV Transmission Network Metastudy Project. 
+```{r}
+DF<- read.dta(file = "/Users/chenxiliu/Desktop/untitled\ folder\ 2/CS567/HW2/ICPSR_22140/DS0002/22140-0002-Data.dta")
+DF1<- DF
+##order the data by id1 and id2
+DF<- DF[order(DF$id1,DF$id2),]
+DF1<- na.omit(DF[,c(2:3,6)])
+## Get the id list
+node_list<- unique(c(DF$id1))
+edge_list<- unique(na.omit(DF[,c(2:3,6)]))
+edge_list$edge_type<- row.names(edge_list)
+edge_list<- na.omit(edge_list)
+
+## Get node attribte dataframe
+n<- length(colnames(DF))
+attribute_list<- seq(1, n, by = 1)
+id1_attribute_list<- attribute_list[grepl("1",colnames(DF))]
+id2_attribute_list<- attribute_list[grepl("2",colnames(DF))]
+attribute_name_list<- gsub("1", "", colnames(DF)[grepl("1",colnames(DF))])
+id1_attribute<- DF[,id1_attribute_list]
+id2_attribute<- DF[,id2_attribute_list]
+names(id1_attribute)<- attribute_name_list
+names(id2_attribute)<- attribute_name_list
+node_attribute_data<- rbind(id1_attribute, id2_attribute)
+node_attribute_data<- node_attribute_data[,c(1,8,10,11,25,26,28,35)]
+node_attribute_data$index<- as.numeric(rownames(node_attribute_data))
+node_attribute_data<- node_attribute_data[order(node_attribute_data$index),]
+
+## Get edge attribute dataframe
+edge_attribute_list<- seq(1, n, by = 1)
+edge_attribute_list<- edge_attribute_list[!as.logical(grepl("1",colnames(DF))+grepl("2",colnames(DF)))]
+edge_attribute_data<- DF[,edge_attribute_list]
+DF1<- na.omit(DF[,c(2:3, 6)])
+
+```
+
+Step 2: Do the RDS sampling
+
+2.1 Sample overall data without any attribute
+In the step, we will do the sampling based on different seeds to identify various "sample tree". Additionally, we will do sampling based on the attribute of the edges to find out the "sample tree" based on the kind of edge attribute
+
+```{r}
+##Over all sampling
+sample_size<- 10000
+sample_seed<- sample(node_list,1)
+sample_seed<- 2
+sample_data<- data.frame("id1" = NA, "id2" = NA, "edge_type" = NA)
+wave_flow<-list()
+wave_flow[["Seed"]]<- sample_seed
+current_wave<- c(sample_seed)
+wave_edge<-list()
+current_size<- 0
+wave_count<- 0
+while (1)
+{
+  wave_count<- wave_count +1
+  #wave_edge[[paste0("Wave", sep = "_", wave_count)]]<-  c((edge_list[edge_list$id1 == current_wave,]$rid))
+  temp1<- c()
+  for (i in 1:length(current_wave))
+  {
+    temp2<- as.vector(edge_list[edge_list$id1 == current_wave[i],]$id2)
+    if(length(temp2) != 0)
+    {
+      for (j in 1:length(temp2))
+      {
+        temp4<- DF1[(DF1$id1 == current_wave[i]) & (DF1$id2 == temp2[j]),]$tietype[1]
+        
+        temp3<- data.frame(current_wave[i], temp2[j], temp4)
+        names(temp3)<- c("id1", "id2", "edge_type")
+        sample_data<- rbind(sample_data, temp3)
+      }
+      temp1<- c(temp1, temp2)
+    }
+    
+  }
+  current_wave<- temp1
+  wave_flow[[paste0("Wave", sep = "_", wave_count)]]<- current_wave
+  current_size<- current_size + length(current_wave)
+  
+  #print(current_wave)
+  #print(wave_flow)
+  
+  if(current_size>= sample_size | wave_count>=3)
+    break
+}
+
+sample_data<- na.omit(sample_data)
+#sample_data<- sample_data[sample_data$edge_type != "OOD",]
+```
+
+
+2.2 Sample data based on the edge attribute
+In the step, we will do RDS based on the edge attributes. In the dataset, 4 kinds of edges have been defined: social connection, drug connection, sexual connection, and needle connection. We will sample the data based on the specified connections and figure out the structure of the network.
+
+2.2.1 Sample data based on Social Connection (Wave = 3)
+
+```{r}
+## Social Connection
+edge_list_social<- edge_list[edge_list$tietype == "Social",]
+#sample_seed<- sample(node_list,1)
+#sample_seed<- 2
+sample_data_social<- data.frame("id1" = NA, "id2" = NA)
+wave_flow<-list()
+wave_flow[["Seed"]]<- sample_seed
+current_wave<- c(sample_seed)
+wave_edge<-list()
+current_size<- 0
+wave_count<- 0
+while (1)
+{
+  wave_count<- wave_count +1
+  #wave_edge[[paste0("Wave", sep = "_", wave_count)]]<-  c((edge_list[edge_list$id1 == current_wave,]$rid))
+  temp1<- c()
+  for (i in 1:length(current_wave))
+  {
+    temp2<- as.vector(edge_list_social[edge_list_social$id1 == current_wave[i],]$id2)
+    if(length(temp2) != 0)
+    {
+      for (j in 1:length(temp2))
+      {
+        temp3<- data.frame(current_wave[i], temp2[j])
+        names(temp3)<- c("id1", "id2")
+        sample_data_social<- rbind(sample_data_social, temp3)
+      }
+      temp1<- c(temp1, temp2)
+    }
+    
+  }
+  current_wave<- temp1
+  wave_flow[[paste0("Wave", sep = "_", wave_count)]]<- current_wave
+  current_size<- current_size + length(current_wave)
+  
+  #print(current_wave)
+  #print(wave_flow)
+  
+  if(current_size>= sample_size | wave_count>=3)
+    break
+}
+
+sample_data_social<- na.omit(sample_data_social)
+
+
+
+
+```
+
+2.2.2 Sample data based on Drug Connection (Wave = 3)
+
+```{r}
+## Drug Connection
+edge_list_drug<- edge_list[edge_list$tietype == "Drug",]
+#sample_seed<- sample(node_list,1)
+#sample_seed<- 2
+sample_data_drug<- data.frame("id1" = NA, "id2" = NA)
+wave_flow<-list()
+wave_flow[["Seed"]]<- sample_seed
+current_wave<- c(sample_seed)
+wave_edge<-list()
+current_size<- 0
+wave_count<- 0
+while (1)
+{
+  wave_count<- wave_count +1
+  #wave_edge[[paste0("Wave", sep = "_", wave_count)]]<-  c((edge_list[edge_list$id1 == current_wave,]$rid))
+  temp1<- c()
+  for (i in 1:length(current_wave))
+  {
+    temp2<- as.vector(edge_list_drug[edge_list_drug$id1 == current_wave[i],]$id2)
+    if(length(temp2) != 0)
+    {
+      for (j in 1:length(temp2))
+      {
+        temp3<- data.frame(current_wave[i], temp2[j])
+        names(temp3)<- c("id1", "id2")
+        sample_data_drug<- rbind(sample_data_drug, temp3)
+      }
+      temp1<- c(temp1, temp2)
+    }
+    
+  }
+  current_wave<- temp1
+  wave_flow[[paste0("Wave", sep = "_", wave_count)]]<- current_wave
+  current_size<- current_size + length(current_wave)
+  
+  #print(current_wave)
+  #print(wave_flow)
+  
+  if(current_size>= sample_size | wave_count>=3)
+    break
+}
+
+sample_data_drug<- na.omit(sample_data_drug)
+```
+
+2.2.3 Sample data based on Sexual Connection (Wave = 3)
+
+```{r}
+edge_list_sexual<- edge_list[edge_list$tietype == "Sexual",]
+#sample_seed<- sample(node_list,1)
+#sample_seed<- 2
+sample_data_sexual<- data.frame("id1" = NA, "id2" = NA)
+wave_flow<-list()
+wave_flow[["Seed"]]<- sample_seed
+current_wave<- c(sample_seed)
+wave_edge<-list()
+current_size<- 0
+wave_count<- 0
+while (1)
+{
+  wave_count<- wave_count +1
+  #wave_edge[[paste0("Wave", sep = "_", wave_count)]]<-  c((edge_list[edge_list$id1 == current_wave,]$rid))
+  temp1<- c()
+  for (i in 1:length(current_wave))
+  {
+    temp2<- as.vector(edge_list_sexual[edge_list_sexual$id1 == current_wave[i],]$id2)
+    if(length(temp2) != 0)
+    {
+      for (j in 1:length(temp2))
+      {
+        temp3<- data.frame(current_wave[i], temp2[j])
+        names(temp3)<- c("id1", "id2")
+        sample_data_sexual<- rbind(sample_data_sexual, temp3)
+      }
+      temp1<- c(temp1, temp2)
+    }
+    
+  }
+  current_wave<- temp1
+  wave_flow[[paste0("Wave", sep = "_", wave_count)]]<- current_wave
+  current_size<- current_size + length(current_wave)
+  
+  #print(current_wave)
+  #print(wave_flow)
+  
+  if(current_size>= sample_size | wave_count>=3)
+    break
+}
+
+sample_data_sexual<- na.omit(sample_data_sexual)
+```
+
+2.2.4 Sample based on Needle Connection (Wave = 3)
+
+```{r}
+edge_list_needle<- edge_list[edge_list$tietype == "Needle",]
+#sample_seed<- sample(node_list,1)
+#sample_seed<- 2
+sample_data_needle<- data.frame("id1" = NA, "id2" = NA)
+wave_flow<-list()
+wave_flow[["Seed"]]<- sample_seed
+current_wave<- c(sample_seed)
+wave_edge<-list()
+current_size<- 0
+wave_count<- 0
+while (1)
+{
+  wave_count<- wave_count +1
+  #wave_edge[[paste0("Wave", sep = "_", wave_count)]]<-  c((edge_list[edge_list$id1 == current_wave,]$rid))
+  temp1<- c()
+  for (i in 1:length(current_wave))
+  {
+    temp2<- as.vector(edge_list_needle[edge_list_needle$id1 == current_wave[i],]$id2)
+    if(length(temp2) != 0)
+    {
+      for (j in 1:length(temp2))
+      {
+        temp3<- data.frame(current_wave[i], temp2[j])
+        names(temp3)<- c("id1", "id2")
+        sample_data_needle<- rbind(sample_data_needle, temp3)
+      }
+      temp1<- c(temp1, temp2)
+    }
+    
+  }
+  current_wave<- temp1
+  wave_flow[[paste0("Wave", sep = "_", wave_count)]]<- current_wave
+  current_size<- current_size + length(current_wave)
+  
+  #print(current_wave)
+  #print(wave_flow)
+  
+  if(current_size>= sample_size | wave_count>=3)
+    break
+}
+
+sample_data_needle<- na.omit(sample_data_needle)
+```
+
+
+Step 3: Plot out the network and calculate the paprmeters of the sampled network like degree, betweenness, and closeness.
+
+3.1 Plot out the sampled network based on various connection attributes, which can assist us to figure out the structure of the sampled network.
+
+```{r}
+#A<- sample_data
+#sample_data<- A
+sample_data<- unique(sample_data)
+sample_data$color<- NA
+
+sample_data[sample_data$edge_type == "Social",]$color<- "dodgerblue2"
+sample_data[sample_data$edge_type == "Drug",]$color<- "firebrick1"
+sample_data[sample_data$edge_type == "Sexual",]$color<- "gold1"
+sample_data[sample_data$edge_type == "Needle",]$color<- "forestgreen"
+sample_data[sample_data$edge_type == "OOD",]$color<- "purple2"
+sample_data[sample_data$edge_type == "Other",]$color<- "pink2"
+#sample_data<-sample_data[sort(sample_data$edge_type),]
+
+matrix_overall<- as.matrix(sample_data[1:2])
+class(matrix_overall)<- "character"
+graph_overall<- graph.edgelist(matrix_overall, directed = T)
+E(graph_overall)$color<- as.vector(sample_data$color)
+plot(graph_overall, vertex.label = "", vertex.size = 2, vertex.color = "grey", edge.arrow.size = 0.1, edge.width = 0.5)
+legend("topright", legend = c("Social", "Drug", "Sexual", "Neddle", "OOD", "Other"), col = levels(as.factor(as.vector(sample_data$color))), bty = "n", pch = 20, pt.cex = 1.5, cex = 1, title = "Connection Type")
+
+
+
+matrix_social<- as.matrix(sample_data_social)
+class(matrix_social)<- "character"
+graph_social<- graph.edgelist(matrix_social, directed = T)
+plot(graph_social, vertex.label = "", vertex.size = 2, vertex.color = "grey", edge.arrow.size = 0.1)
+legend("topright", legend = "Social", bty = "n", pch = 20, pt.cex = 1.5, cex = 1)
+
+matrix_drug<- as.matrix(sample_data_drug)
+class(matrix_drug)<- "character"
+graph_drug<- graph.edgelist(matrix_drug, directed = T)
+plot(graph_drug, vertex.label = "", vertex.size = 2, vertex.color = "grey", edge.arrow.size = 0.1)
+legend("topright", legend = "Drug", bty = "n", pch = 20, pt.cex = 1.5, cex = 1)
+
+matrix_sexual<- as.matrix(sample_data_sexual)
+class(matrix_sexual)<- "character"
+graph_sexual<- graph.edgelist(matrix_sexual, directed = T)
+plot(graph_sexual, vertex.label = "", vertex.size = 2, vertex.color = "grey", edge.arrow.size = 0.1)
+legend("topright", legend = "Sexual", bty = "n", pch = 20, pt.cex = 1.5, cex = 1)
+
+matrix_needle<- as.matrix(sample_data_needle)
+class(matrix_needle)<- "character"
+graph_needle<- graph.edgelist(matrix_needle, directed = T)
+plot(graph_needle, vertex.label = "", vertex.size = 2, vertex.color = "grey", edge.arrow.size = 0.1)
+legend("topright", legend = "Needle", bty = "n", pch = 20, pt.cex = 1.5, cex = 1)
+
+
+
+```
+
+3.2 Sampled data analysis based on node attribute
+
+3.2.1 Plot the HIV transimssion in various connections (i.e., social, drug, sexual, and needle connections)
+```{r}
+sample_vertex<- as.numeric(V(graph_overall)$name)
+sample_node_attribute<- data.frame(node_attribute_data[node_attribute_data$id == sample_seed, ][1,])
+for(i in 2:length(sample_vertex))
+{
+  sample_node_attribute<- rbind(sample_node_attribute, node_attribute_data[node_attribute_data$id == sample_vertex[i], ][1,])
+}
+sample_node_attribute<- droplevels(sample_node_attribute)
+
+A<- as.matrix(sample_data[1:2])
+class(A)<- "character"
+V(graph_overall)$race<- as.character(sample_node_attribute$race)
+V(graph_overall)$sex<- as.character(sample_node_attribute$sex)
+V(graph_overall)$orient<- as.character(sample_node_attribute$orient)
+V(graph_overall)$unemp<- as.character(sample_node_attribute$unemp)
+V(graph_overall)$streets<- as.character(sample_node_attribute$streets)
+V(graph_overall)$educ<- as.character(sample_node_attribute$educ)
+V(graph_overall)$hiv<- as.character(sample_node_attribute$hiv)
+E(graph_overall)$color<- "black"
+
+
+plot(graph_overall, vertex.size = 3, vertex.label = '', edge.arrow.size = 0.1, vertex.color = c("firebrick1", "deepskyblue","gold1") [sample_node_attribute$sex])
+legend("topright", legend = c("OOD", "Neg", "Pos"), col = c("gold1", "deepskyblue", "firebrick1"), bty = "n", pch = 20, pt.cex = 1.5, cex = 1, title = "HIV distribution")
+
+plot(graph_drug, vertex.size = 3, vertex.label = '', edge.arrow.size = 0.1,
+     vertex.color = c("gold1", "deepskyblue", "firebrick1") [sample_node_attribute$sex])
+legend("topright", legend = c("OOD", "Neg", "Pos"),
+       col = c("gold1", "deepskyblue", "firebrick1"),
+       bty = "n", pch = 20, pt.cex = 1.5, cex = 1, title = "HIV in Drug")
+
+plot(graph_needle, vertex.size = 3, vertex.label = '', edge.arrow.size = 0.1,
+     vertex.color = c("gold1", "deepskyblue", "firebrick1") [sample_node_attribute$sex])
+legend("topright", legend = c("OOD", "Neg", "Pos"),
+       col = c("gold1", "deepskyblue", "firebrick1"),
+       bty = "n", pch = 20, pt.cex = 1.5, cex = 1, title = "HIV in Needle")
+
+plot(graph_social, vertex.size = 3, vertex.label = '', edge.arrow.size = 0.1,
+     vertex.color = c("gold1", "deepskyblue", "firebrick1") [sample_node_attribute$sex])
+legend("topright", legend = c("OOD", "Neg", "Pos"),
+       col = c("gold1", "deepskyblue", "firebrick1"),
+       bty = "n", pch = 20, pt.cex = 1.5, cex = 1, title = "HIV in Social")
+
+plot(graph_sexual, vertex.size = 3, vertex.label = '', edge.arrow.size = 0.1,
+     vertex.color = c("gold1", "deepskyblue", "firebrick1") [sample_node_attribute$sex])
+legend("topright", legend = c("OOD", "Neg", "Pos"),
+       col = c("gold1", "deepskyblue", "firebrick1"),
+       bty = "n", pch = 20, pt.cex = 1.5, cex = 1, title = "HIV in Sexual")
+
+
+```
+
+3.2.2 Calculate the percentage of HIV in various connections
+
+```{r}
+
+HIV_total_percentage<- length(DF[DF$hiv1 == "Pos" | DF$hiv2 == "Pos", ]$rid)/length(DF$rid)
+HIV_sample_percentage<- length(sample_data[sample_data$hiv1 == "Pos" | sample_data$hiv2 == "Pos", ]$id1)/length(sample_data$id1)
+
+HIV_total_Social_percentage<- length(DF[(DF$hiv1 == "Pos" | DF$hiv2 == "Pos") & DF$tietype == "Social", ]$rid)/length(DF[DF$tietype == "Social",]$rid)
+HIV_sample_Social_percentage<- length(sample_data[(sample_data$hiv1 == "Pos" | sample_data$hiv2 == "Pos") & sample_data$edge_type == "Social", ]$id1)/length(sample_data[sample_data$edge_type == "Social",]$id1)
+
+HIV_total_Drug_percentage<- length(DF[(DF$hiv1 == "Pos" | DF$hiv2 == "Pos") & DF$tietype == "Drug", ]$rid)/length(DF[DF$tietype == "Drug",]$rid)
+HIV_sample_Drug_percentage<- length(sample_data[(sample_data$hiv1 == "Pos" | sample_data$hiv2 == "Pos") & sample_data$edge_type == "Drug", ]$id1)/length(sample_data[sample_data$edge_type == "Drug",]$id1)
+
+HIV_total_Sexual_percentage<- length(DF[(DF$hiv1 == "Pos" | DF$hiv2 == "Pos") & DF$tietype == "Sexual", ]$rid)/length(DF[DF$tietype == "Sexual",]$rid)
+HIV_sample_Sexual_percentage<- length(sample_data[(sample_data$hiv1 == "Pos" | sample_data$hiv2 == "Pos") & sample_data$edge_type == "Sexual", ]$id1)/length(sample_data[sample_data$edge_type == "Sexual",]$id1)
+
+HIV_total_Needle_percentage<- length(DF[(DF$hiv1 == "Pos" | DF$hiv2 == "Pos") & DF$tietype == "Needle", ]$rid)/length(DF[DF$tietype == "Needle",]$rid)
+HIV_sample_Needle_percentage<- length(sample_data[(sample_data$hiv1 == "Pos" | sample_data$hiv2 == "Pos") & sample_data$edge_type == "Needle", ]$id1)/length(sample_data[sample_data$edge_type == "Needle",]$id1)
+
+HIV_rate<- data.frame("Total" = c(HIV_total_percentage, HIV_sample_percentage), "Social" = c(HIV_total_Social_percentage, HIV_sample_Social_percentage), "Drug" = c(HIV_total_Drug_percentage, HIV_sample_Drug_percentage), "Sexual" = c(HIV_total_Sexual_percentage, HIV_sample_Sexual_percentage), "Needle" = c(HIV_total_Needle_percentage, HIV_sample_Needle_percentage))
+row.names(HIV_rate)<- c("Groundtruth_Data", "Sample_Data")
+
+
+```
+
+
+3.3 Calculate the degree, betweenness, and closeness of the network
+
+```{r}
+Parameter<- data.frame("Type" = NA, "Degree" = NA, "Betweenness" = NA, "Closeness" = NA)
+degree_sample<- as.numeric(degree(graph_overall))
+between_sample<- as.numeric(betweenness(graph_overall))
+close_sample<- closeness(graph_overall)
+for (i in 1:length(degree_sample))
+{
+  Parameter<- rbind(Parameter, c("Sample Seed 2", as.numeric(degree_sample[i]), as.numeric(between_sample[i]), as.numeric(close_sample[i])))
+}
+
+All_data<- as.matrix(DF[,2:3])
+class(All_data)<- "character"
+degree_all<- as.numeric(degree(graph.edgelist(All_data)))
+between_all<- as.numeric(betweenness(graph.edgelist(All_data)))
+close_all<- as.numeric(closeness(graph.edgelist(All_data)))
+for (i in 1:length(degree_all))
+{
+  Parameter<- rbind(Parameter, c("Total Data", as.numeric(degree_all[i]), as.numeric((between_all[i]), as.numeric(close_all[i]))))
+}
+
+Parameter<- na.omit(Parameter)
+class(Parameter$Degree)<- "numeric"
+class(Parameter$Betweenness)<- "numeric"
+class(Parameter$Closeness)<- "numeric"
+
+box_degree<- ggplot(Parameter, aes(x = Type, y = Degree))
+box_degree<- box_degree + geom_boxplot()
+#box_degree<- box_degree + scale_x_discrete(labels = x_label)
+box_degree<- box_degree + ggtitle("Distribution of Degree in Sample data and Groundtruth Data")
+box_degree<- box_degree + theme(plot.title = element_text(hjust = 0.5))
+print(box_degree)
+
+box_between<- ggplot(Parameter, aes(x = Type, y = Betweenness))
+box_between<- box_between + geom_boxplot()
+#box_degree<- box_degree + scale_x_discrete(labels = x_label)
+box_between<- box_between + ggtitle("Distribution of Betweenness in Sample data and Groundtruth Data")
+box_between<- box_between + theme(plot.title = element_text(hjust = 0.5))
+print(box_between)
+
+
+
+#plot(table(Parameter[Parameter$Type == "Sample Seed 2",]$Degree))
+#plot(table(Parameter[Parameter$Type == "Total Data",]$Degree))
+
+#mean(Parameter[Parameter$Type == "Sample Seed 2",]$Degree)
+#mean(Parameter[Parameter$Type == "Total Data",]$Degree)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
